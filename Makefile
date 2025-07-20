@@ -11,12 +11,12 @@ generate:
 # Run the application
 run:
 	@echo "Running application..."
-	go run .
+	go run ./go/
 
 # Build the application
 build:
 	@echo "Building application..."
-	go build -o senshukai .
+	@cd ./go/ && go build -o ../senshukai . && cd ..
 
 # Clean generated files
 clean:
