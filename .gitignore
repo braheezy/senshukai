@@ -1,0 +1,24 @@
+# Generated frames
+frames/
+
+# Binary files
+senshukai
+*.exe
+
+# Go build artifacts
+*.o
+*.a
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
