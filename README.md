@@ -2,7 +2,7 @@
 
 bad apple in the shell
 
-<video src="" controls="controls" style="max-width: 730px;">
+<video src="https://github.com/user-attachments/assets/e3cb6dd5-35ce-4406-8942-966ba269d3f3" controls="controls" style="max-width: 730px;">
 </video>
 
 ## Usage
