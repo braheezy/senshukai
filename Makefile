@@ -1,22 +1,27 @@
 .PHONY: generate run clean build
 
 # Default target
-all: generate run
+all: generate build run
 
 # Generate frames from video
 generate:
 	@echo "Generating frames from video..."
-	go run cmd/generate/main.go
-
-# Run the application
-run:
-	@echo "Running application..."
-	go run ./go/
+	@which ffmpeg > /dev/null || (echo "Error: ffmpeg is required but not found in PATH" && echo "Please install ffmpeg and try again" && exit 1)
+	@mkdir -p frames
+	@test -f bad_apple.mp4 || (echo "Error: video file bad_apple.mp4 not found" && exit 1)
+	@echo "Running ffmpeg command: ffmpeg -i bad_apple.mp4 -vf scale=640:-1:flags=lanczos,format=gray,fps=60 frames/out%04d.png -y"
+	@ffmpeg -i bad_apple.mp4 -vf "scale=640:-1:flags=lanczos,format=gray,fps=60" frames/out%04d.png -y
+	@echo "Frame generation complete!"
 
 # Build the application
 build:
 	@echo "Building application..."
 	@cd ./go/ && go build -o ../senshukai . && cd ..
+
+# Run the application
+run: build
+	@echo "Running application..."
+	./senshukai
 
 # Clean generated files
 clean:
