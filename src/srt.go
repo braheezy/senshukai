@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"embed"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 )
+
+//go:embed bad_apple_*.srt
+var subtitleFiles embed.FS
 
 // Subtitle represents a single subtitle entry
 type Subtitle struct {
@@ -19,7 +22,7 @@ type Subtitle struct {
 
 // ParseSRT parses an SRT file and returns a slice of Subtitle objects
 func ParseSRT(filename string) ([]Subtitle, error) {
-	file, err := os.Open(filename)
+	file, err := subtitleFiles.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("could not open srt file: %w", err)
 	}

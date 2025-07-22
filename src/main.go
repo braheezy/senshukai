@@ -47,7 +47,7 @@ type Model struct {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return loadSubtitles()
+	return nil
 }
 
 // Update handles messages and updates the model
@@ -121,10 +121,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.audioStarted = true
 		}
 		return m, tea.Batch(tick(), waitForFrame(m.frameChan))
-	case subtitlesLoadedMsg:
-		m.subtitlesJA = msg.subtitlesJA
-		m.subtitlesEN = msg.subtitlesEN
-		return m, nil
 
 	case frameLoadedMsg:
 		// Add frame from background loading
@@ -196,10 +192,7 @@ func (m Model) View() string {
 
 		// Controls text
 		controls := []string{
-			"space - play/pause",
-			"r - reset",
-			"s - subtitles",
-			"q - quit",
+			"[space] play/pause | [r] reset | [s] subtitles | [q] quit",
 		}
 
 		// Always use dim style
@@ -229,10 +222,7 @@ type tickMsg time.Time
 type framesLoadedMsg struct {
 	frames []string
 }
-type subtitlesLoadedMsg struct {
-	subtitlesJA []Subtitle
-	subtitlesEN []Subtitle
-}
+
 type frameLoadedMsg struct {
 	frame string
 }
@@ -243,24 +233,6 @@ func tick() tea.Cmd {
 	return func() tea.Msg {
 		time.Sleep(16 * time.Millisecond) // ~60 FPS (1000ms / 60 ≈ 16.67ms)
 		return tickMsg(time.Now())
-	}
-}
-
-func loadSubtitles() tea.Cmd {
-	return func() tea.Msg {
-		ja, errJA := ParseSRT("src/bad_apple_ja.srt")
-		if errJA != nil {
-			log.Errorf("could not load japanese subtitles: %v", errJA)
-		}
-		en, errEN := ParseSRT("src/bad_apple_en.srt")
-		if errEN != nil {
-			log.Errorf("could not load english subtitles: %v", errEN)
-		}
-
-		return subtitlesLoadedMsg{
-			subtitlesJA: ja,
-			subtitlesEN: en,
-		}
 	}
 }
 
@@ -440,21 +412,6 @@ func bilinearInterpolate(img image.Image, x, y float64, maxW, maxH int) uint8 {
 	return val
 }
 
-func pixelRune(top, bot uint8) rune {
-	const thr = 200 // Higher threshold to be more sensitive to lighter pixels
-	topOn, botOn := top < thr, bot < thr
-	switch {
-	case topOn && botOn:
-		return '█' // full block
-	case topOn:
-		return '▀' // upper half
-	case botOn:
-		return '▄' // lower half
-	default:
-		return ' '
-	}
-}
-
 func pixelRuneSingle(pixel uint8) rune {
 	// Use more grayscale characters for better detail
 	switch {
@@ -479,8 +436,8 @@ func (m *Model) updateSubtitle() {
 	// Each frame is ~16.67ms at 60 FPS
 	videoTime := time.Duration(m.currentFrame) * (1000 / 60) * time.Millisecond
 
-	// Show controls during intro (first 15 seconds)
-	if videoTime < 15*time.Second {
+	// Show controls during intro
+	if videoTime < 14600*time.Millisecond {
 		m.showControls = true
 	} else {
 		m.showControls = false
@@ -508,6 +465,16 @@ func (m *Model) updateSubtitle() {
 }
 
 func initialModel(withAudio bool) Model {
+	// Load subtitles synchronously since they're embedded
+	ja, errJA := ParseSRT("bad_apple_ja.srt")
+	if errJA != nil {
+		log.Errorf("could not load japanese subtitles: %v", errJA)
+	}
+	en, errEN := ParseSRT("bad_apple_en.srt")
+	if errEN != nil {
+		log.Errorf("could not load english subtitles: %v", errEN)
+	}
+
 	return Model{
 		frames:       make([]string, 0),
 		currentFrame: 0,
@@ -521,6 +488,8 @@ func initialModel(withAudio bool) Model {
 		audioStarted: false,
 		audioPlayer:  nil,
 		audioEnabled: withAudio,
+		subtitlesJA:  ja,
+		subtitlesEN:  en,
 		subtitleMode: 0,    // Default to no subtitles
 		showControls: true, // Start with controls visible
 	}
@@ -531,11 +500,13 @@ const (
 	port = "23234"
 )
 
-// arg to run in ssh mode or not
+// args to run in ssh mode or not, and to disable audio
 var sshMode bool
+var quietMode bool
 
 func main() {
 	flag.BoolVar(&sshMode, "ssh", false, "run in ssh mode")
+	flag.BoolVar(&quietMode, "q", false, "disable audio")
 	flag.Parse()
 
 	// Check if frames directory exists and has frames
@@ -585,7 +556,7 @@ func main() {
 			log.Error("Could not stop server", "error", err)
 		}
 	} else {
-		p := tea.NewProgram(initialModel(!sshMode), tea.WithAltScreen())
+		p := tea.NewProgram(initialModel(!sshMode && !quietMode), tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			fmt.Printf("Error running program: %v", err)
 			os.Exit(1)
