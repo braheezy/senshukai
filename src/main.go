@@ -26,23 +26,28 @@ import (
 
 // Model represents the application state
 type Model struct {
-	frames       []string
-	currentFrame int
-	frameCount   int
-	playing      bool
-	lastUpdate   time.Time
-	width        int
-	height       int
-	loading      bool
-	frameChan    chan string
-	audioStarted bool
-	audioPlayer  *AudioPlayer
-	audioEnabled bool
+	frames          []string
+	currentFrame    int
+	frameCount      int
+	playing         bool
+	lastUpdate      time.Time
+	width           int
+	height          int
+	loading         bool
+	frameChan       chan string
+	audioStarted    bool
+	audioPlayer     *AudioPlayer
+	audioEnabled    bool
+	subtitlesJA     []Subtitle
+	subtitlesEN     []Subtitle
+	subtitleMode    int // 0: off, 1: JA, 2: EN
+	currentSubtitle string
+	showControls    bool
 }
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return nil
+	return loadSubtitles()
 }
 
 // Update handles messages and updates the model
@@ -74,6 +79,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tick()
 			}
 			return m, nil
+		case "s":
+			// Cycle through subtitle modes
+			m.subtitleMode = (m.subtitleMode + 1) % 3
+			// Clear current subtitle when changing modes
+			m.currentSubtitle = ""
+			return m, nil
 		case "r":
 			// Reset to beginning
 			m.currentFrame = 0
@@ -88,6 +99,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		if m.playing && m.frameCount > 0 {
 			m.currentFrame = (m.currentFrame + 1) % m.frameCount
+			m.updateSubtitle()
 			// Also check for new frames from background loading
 			return m, tea.Batch(tick(), waitForFrame(m.frameChan))
 		}
@@ -109,6 +121,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.audioStarted = true
 		}
 		return m, tea.Batch(tick(), waitForFrame(m.frameChan))
+	case subtitlesLoadedMsg:
+		m.subtitlesJA = msg.subtitlesJA
+		m.subtitlesEN = msg.subtitlesEN
+		return m, nil
+
 	case frameLoadedMsg:
 		// Add frame from background loading
 		m.frames = append(m.frames, msg.frame)
@@ -123,9 +140,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		// Start loading frames when we know the terminal size
 		if m.frameCount == 0 && !m.loading {
+			// Always reserve 3 lines for subtitles
+			videoHeight := m.height - 3
+			if videoHeight < 1 {
+				videoHeight = 1
+			}
 			return m, tea.Batch(
-				loadInitialFrames(m.width, m.height),
-				listenForFrames(m.frameChan, m.width, m.height),
+				loadInitialFrames(m.width, videoHeight),
+				listenForFrames(m.frameChan, m.width, videoHeight),
 			)
 		}
 		return m, nil
@@ -136,21 +158,80 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the model
 func (m Model) View() string {
 	if m.frameCount == 0 {
-		return "Loading frames...\nPress 'q' to quit, 'space' to play/pause, 'r' to reset"
+		return "Loading frames...\nPress 'q' to quit, 'space' to play/pause, 'r' to reset, 's' for subtitles"
 	}
 
+	var view strings.Builder
 	if m.currentFrame < len(m.frames) {
-		// Frames are already sized to terminal dimensions
-		return m.frames[m.currentFrame]
+		view.WriteString(m.frames[m.currentFrame])
+	} else {
+		view.WriteString("No frame to display")
 	}
 
-	return "No frame to display"
+	// Add subtitle or controls to view
+	if m.subtitleMode > 0 && m.currentSubtitle != "" {
+		view.WriteString("\n\n")
+
+		// Split subtitle into lines and center each line
+		lines := strings.Split(m.currentSubtitle, "\n")
+		for _, line := range lines {
+			// Trim whitespace from the line
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+
+			// Calculate padding for centering
+			padding := (m.width - len(line)) / 2
+			if padding < 0 {
+				padding = 0
+			}
+
+			view.WriteString(strings.Repeat(" ", padding))
+			view.WriteString(line)
+			view.WriteString("\n")
+		}
+	} else if m.showControls {
+		view.WriteString("\n\n")
+
+		// Controls text
+		controls := []string{
+			"space - play/pause",
+			"r - reset",
+			"s - subtitles",
+			"q - quit",
+		}
+
+		// Always use dim style
+		style := "\033[2m"
+
+		// Display controls with fade
+		for _, line := range controls {
+			// Calculate padding for centering
+			padding := (m.width - len(line)) / 2
+			if padding < 0 {
+				padding = 0
+			}
+
+			view.WriteString(strings.Repeat(" ", padding))
+			view.WriteString(style)
+			view.WriteString(line)
+			view.WriteString("\033[0m") // Reset style
+			view.WriteString("\n")
+		}
+	}
+
+	return view.String()
 }
 
 // Messages
 type tickMsg time.Time
 type framesLoadedMsg struct {
 	frames []string
+}
+type subtitlesLoadedMsg struct {
+	subtitlesJA []Subtitle
+	subtitlesEN []Subtitle
 }
 type frameLoadedMsg struct {
 	frame string
@@ -162,6 +243,24 @@ func tick() tea.Cmd {
 	return func() tea.Msg {
 		time.Sleep(16 * time.Millisecond) // ~60 FPS (1000ms / 60 ≈ 16.67ms)
 		return tickMsg(time.Now())
+	}
+}
+
+func loadSubtitles() tea.Cmd {
+	return func() tea.Msg {
+		ja, errJA := ParseSRT("src/bad_apple_ja.srt")
+		if errJA != nil {
+			log.Errorf("could not load japanese subtitles: %v", errJA)
+		}
+		en, errEN := ParseSRT("src/bad_apple_en.srt")
+		if errEN != nil {
+			log.Errorf("could not load english subtitles: %v", errEN)
+		}
+
+		return subtitlesLoadedMsg{
+			subtitlesJA: ja,
+			subtitlesEN: en,
+		}
 	}
 }
 
@@ -374,6 +473,40 @@ func pixelRuneSingle(pixel uint8) rune {
 	}
 }
 
+func (m *Model) updateSubtitle() {
+	// Calculate current video time based on frame number
+	// Video starts at frame 1, and subtitles start at ~29 seconds
+	// Each frame is ~16.67ms at 60 FPS
+	videoTime := time.Duration(m.currentFrame) * (1000 / 60) * time.Millisecond
+
+	// Show controls during intro (first 15 seconds)
+	if videoTime < 15*time.Second {
+		m.showControls = true
+	} else {
+		m.showControls = false
+	}
+
+	if m.subtitleMode == 0 {
+		m.currentSubtitle = ""
+		return
+	}
+
+	var subs []Subtitle
+	if m.subtitleMode == 1 {
+		subs = m.subtitlesJA
+	} else {
+		subs = m.subtitlesEN
+	}
+
+	m.currentSubtitle = ""
+	for _, sub := range subs {
+		if videoTime >= sub.StartTime && videoTime <= sub.EndTime {
+			m.currentSubtitle = sub.Text
+			break
+		}
+	}
+}
+
 func initialModel(withAudio bool) Model {
 	return Model{
 		frames:       make([]string, 0),
@@ -388,6 +521,8 @@ func initialModel(withAudio bool) Model {
 		audioStarted: false,
 		audioPlayer:  nil,
 		audioEnabled: withAudio,
+		subtitleMode: 0,    // Default to no subtitles
+		showControls: true, // Start with controls visible
 	}
 }
 
@@ -461,8 +596,12 @@ func main() {
 
 // You can wire any Bubble Tea model up to the middleware with a function that
 // handles the incoming ssh.Session. Here we just grab the terminal info and
-// pass it to the new model. You can also return tea.ProgramOptions (such as
+// pass it to the new model. You can also return tea.ProgramOption (such as
 // tea.WithAltScreen) on a session by session basis.
 func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-	return initialModel(false), []tea.ProgramOption{tea.WithAltScreen()}
+	m := initialModel(false)
+	pty, _, _ := s.Pty()
+	m.width, m.height = pty.Window.Width, pty.Window.Height
+
+	return m, []tea.ProgramOption{tea.WithAltScreen()}
 }
