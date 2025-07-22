@@ -16,11 +16,16 @@ generate:
 # Build the application
 build:
 	@echo "Building application..."
-	@cd ./go/ && go build -o ../senshukai . && cd ..
+	@cd ./src/ && go build -o ../senshukai . && cd ..
 
 # Run the application
 run: build
 	@echo "Running application..."
+	./senshukai
+
+# Run the SSH server
+server: build
+	@echo "Starting SSH server..."
 	./senshukai
 
 # Clean generated files
@@ -41,6 +46,7 @@ help:
 	@echo "Available targets:"
 	@echo "  generate      - Generate frames from video (requires ffmpeg)"
 	@echo "  run          - Run the application"
+	@echo "  server       - Start the SSH server"
 	@echo "  build        - Build the application"
 	@echo "  clean        - Remove generated files"
 	@echo "  check-ffmpeg - Check if ffmpeg is installed"

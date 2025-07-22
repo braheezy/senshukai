@@ -1,15 +1,27 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"net"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/log"
+	"github.com/charmbracelet/ssh"
+	"github.com/charmbracelet/wish"
+	"github.com/charmbracelet/wish/activeterm"
+	"github.com/charmbracelet/wish/bubbletea"
+	"github.com/charmbracelet/wish/logging"
 )
 
 // Model represents the application state
@@ -25,30 +37,12 @@ type Model struct {
 	frameChan    chan string
 	audioStarted bool
 	audioPlayer  *AudioPlayer
-}
-
-// initialModel returns the initial model
-func initialModel() Model {
-	return Model{
-		frames:       make([]string, 0),
-		currentFrame: 0,
-		frameCount:   0,
-		playing:      false,
-		lastUpdate:   time.Now(),
-		width:        80, // Default width
-		height:       60, // Default height
-		loading:      false,
-		frameChan:    make(chan string, 100), // Buffer for 100 frames
-		audioStarted: false,
-		audioPlayer:  nil,
-	}
+	audioEnabled bool
 }
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
-		tea.EnterAltScreen,
-	)
+	return nil
 }
 
 // Update handles messages and updates the model
@@ -103,8 +97,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		// Auto-start playing when initial frames are loaded
 		m.playing = true
-		// Initialize audio player
-		if !m.audioStarted {
+		// Initialize audio player only if audio is enabled
+		if m.audioEnabled && !m.audioStarted {
 			audioPlayer, err := NewAudioPlayer()
 			if err != nil {
 				fmt.Printf("Warning: Could not initialize audio: %v\n", err)
@@ -380,7 +374,35 @@ func pixelRuneSingle(pixel uint8) rune {
 	}
 }
 
+func initialModel(withAudio bool) Model {
+	return Model{
+		frames:       make([]string, 0),
+		currentFrame: 0,
+		frameCount:   0,
+		playing:      false,
+		lastUpdate:   time.Now(),
+		width:        80, // Default width
+		height:       60, // Default height
+		loading:      false,
+		frameChan:    make(chan string, 100), // Buffer for 100 frames
+		audioStarted: false,
+		audioPlayer:  nil,
+		audioEnabled: withAudio,
+	}
+}
+
+const (
+	host = "localhost"
+	port = "23234"
+)
+
+// arg to run in ssh mode or not
+var sshMode bool
+
 func main() {
+	flag.BoolVar(&sshMode, "ssh", false, "run in ssh mode")
+	flag.Parse()
+
 	// Check if frames directory exists and has frames
 	frameCount, err := countFrames()
 	if err != nil {
@@ -395,9 +417,52 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Printf("Error running program: %v", err)
-		os.Exit(1)
+	if sshMode {
+
+		s, err := wish.NewServer(
+			wish.WithAddress(net.JoinHostPort(host, port)),
+			wish.WithHostKeyPath(".ssh/id_ed25519"),
+			wish.WithMiddleware(
+				bubbletea.Middleware(teaHandler),
+				activeterm.Middleware(), // Bubble Tea apps usually require a PTY.
+				logging.Middleware(),
+			),
+		)
+		if err != nil {
+			log.Error("Could not start server", "error", err)
+		}
+
+		done := make(chan os.Signal, 1)
+		signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+		log.Info("Starting SSH server", "host", host, "port", port)
+		go func() {
+			if err = s.ListenAndServe(); err != nil && !errors.Is(err, ssh.ErrServerClosed) {
+				log.Error("Could not start server", "error", err)
+				done <- nil
+			}
+		}()
+
+		<-done
+		log.Info("Stopping SSH server")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer func() { cancel() }()
+		if err := s.Shutdown(ctx); err != nil && !errors.Is(err, ssh.ErrServerClosed) {
+			log.Error("Could not stop server", "error", err)
+		}
+	} else {
+		p := tea.NewProgram(initialModel(!sshMode), tea.WithAltScreen())
+		if _, err := p.Run(); err != nil {
+			fmt.Printf("Error running program: %v", err)
+			os.Exit(1)
+		}
+
 	}
+}
+
+// You can wire any Bubble Tea model up to the middleware with a function that
+// handles the incoming ssh.Session. Here we just grab the terminal info and
+// pass it to the new model. You can also return tea.ProgramOptions (such as
+// tea.WithAltScreen) on a session by session basis.
+func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
+	return initialModel(false), []tea.ProgramOption{tea.WithAltScreen()}
 }
