@@ -1,3 +1,8 @@
+# Go binary name (can be overridden: make GO_BIN=myapp)
+GO_BIN ?= senshukai
+# Go command (can be overridden: make GO=go1.21)
+GO ?= go
+
 .PHONY: generate run clean build
 
 # Default target
@@ -16,23 +21,23 @@ generate:
 # Build the application
 build:
 	@echo "Building application..."
-	@cd ./src/ && go build -o ../senshukai . && cd ..
+	@cd ./src/ && $(GO) build -o ../$(GO_BIN) . && cd ..
 
 # Run the application
 run: build
 	@echo "Running application..."
-	./senshukai
+	./$(GO_BIN)
 
 # Run the SSH server
 server: build
 	@echo "Starting SSH server..."
-	./senshukai
+	./$(GO_BIN)
 
 # Clean generated files
 clean:
 	@echo "Cleaning generated files..."
 	rm -rf frames/
-	rm -f senshukai
+	rm -f $(GO_BIN)
 
 # Check if ffmpeg is installed
 check-ffmpeg:

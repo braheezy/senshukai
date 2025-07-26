@@ -496,9 +496,23 @@ func initialModel(withAudio bool) Model {
 }
 
 const (
-	host = "localhost"
-	port = "23234"
+	defaultHost = "localhost"
+	defaultPort = "23234"
 )
+
+func getHost() string {
+	if host := os.Getenv("HOST"); host != "" {
+		return host
+	}
+	return defaultHost
+}
+
+func getPort() string {
+	if port := os.Getenv("PORT"); port != "" {
+		return port
+	}
+	return defaultPort
+}
 
 // args to run in ssh mode or not, and to disable audio
 var sshMode bool
@@ -526,7 +540,7 @@ func main() {
 	if sshMode {
 
 		s, err := wish.NewServer(
-			wish.WithAddress(net.JoinHostPort(host, port)),
+			wish.WithAddress(net.JoinHostPort(getHost(), getPort())),
 			wish.WithHostKeyPath(".ssh/id_ed25519"),
 			wish.WithMiddleware(
 				bubbletea.Middleware(teaHandler),
@@ -540,7 +554,7 @@ func main() {
 
 		done := make(chan os.Signal, 1)
 		signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
-		log.Info("Starting SSH server", "host", host, "port", port)
+		log.Info("Starting SSH server", "host", getHost(), "port", getPort())
 		go func() {
 			if err = s.ListenAndServe(); err != nil && !errors.Is(err, ssh.ErrServerClosed) {
 				log.Error("Could not start server", "error", err)
@@ -570,7 +584,9 @@ func main() {
 // pass it to the new model. You can also return tea.ProgramOption (such as
 // tea.WithAltScreen) on a session by session basis.
 func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-	m := initialModel(false)
+	// Enable audio in SSH mode unless quiet mode is set
+	audioEnabled := !quietMode
+	m := initialModel(audioEnabled)
 	pty, _, _ := s.Pty()
 	m.width, m.height = pty.Window.Width, pty.Window.Height
 
